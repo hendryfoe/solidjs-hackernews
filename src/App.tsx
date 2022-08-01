@@ -1,4 +1,16 @@
-import { Component, createResource, createSignal, FlowComponent, For, JSXElement, Show, VoidComponent } from 'solid-js';
+import {
+  batch,
+  Component,
+  createEffect,
+  createResource,
+  createSignal,
+  FlowComponent,
+  For,
+  JSXElement,
+  Show,
+  VoidComponent
+} from 'solid-js';
+import { createStore, produce } from 'solid-js/store';
 
 import { EndpointConstant } from '@/constants/endpoint.constant';
 import { GeneralConstant } from '@/constants/general.constant';
@@ -168,61 +180,63 @@ function storiesFetcher() {
 const App: Component = () => {
   const [stories] = createResource(storiesFetcher);
   const [cursor, setCursor] = createSignal(0);
-  const [items, { mutate, refetch }] = createResource<ItemFetcherResponse, number[]>(
+  const [items, setItems] = createStore<ItemFetcherResponse>({
+    data: [],
+    canNext: true
+  });
+  const [fetchedItems, { mutate, refetch }] = createResource<ItemFetcherResponse, number[]>(
     () => stories(),
-    (stories, { value, refetching }) => {
-      const results = itemFetcher(stories, cursor());
-
-      if (refetching && refetching === 'next' && value?.canNext) {
-        return results.then(({ data, canNext }) => ({
-          data: [...value.data, ...data],
-          canNext
-        }));
-      }
-      return results;
-    }
+    (stories, { value, refetching }) => itemFetcher(stories, cursor())
   );
+
+  createEffect(() => {
+    if (fetchedItems()) {
+      // mutate data due to the need to persist in the comments section
+      setItems(
+        produce((items) => {
+          items.data.push(...(fetchedItems()!.data ?? []));
+          items.canNext = fetchedItems()!.canNext;
+        })
+      );
+    }
+  });
 
   function handleFetchMore() {
     setCursor(cursor() + 1);
-    refetch('next');
+    refetch();
   }
 
   return (
     <div class="w-full bg-hackernews-body md:container md:my-2 m-auto">
       <Header />
       <Show when={stories.error}>Something went wrong. {stories.error}</Show>
-      <Show when={items.error}>Something went wrong. {items.error}</Show>
-      <Show when={items()} fallback={<div>Loading....</div>}>
-        {(items) => {
-          return (
-            <section class="py-1 pl-1 pr-4 flex flex-col">
-              <For each={items.data}>
-                {(item, index) => {
-                  return (
-                    <Item
-                      no={`${index() + 1}.`}
-                      title={item.title}
-                      source={item.url}
-                      sourceDomain={item.url}
-                      points={item.score}
-                      author={item.by}
-                      createdAt={getDifferentInDays(new Date(item.time * 1000), new Date())}
-                      commentsCount={item.descendants}
-                    >
-                      {(isOpen) => <Comments isOpen={isOpen} itemIds={item.kids ?? []} />}
-                    </Item>
-                  );
-                }}
-              </For>
-              <Show when={items.canNext}>
-                <div class="text-gray-400 text-2xl mt-3 ml-10 pb-10">
-                  <button onClick={handleFetchMore}>More</button>
-                </div>
-              </Show>
-            </section>
-          );
-        }}
+      <Show when={fetchedItems.error}>Something went wrong. {fetchedItems.error}</Show>
+      <Show when={items.data.length} fallback={<div>Loading....</div>}>
+        <section class="py-1 pl-1 pr-4 flex flex-col">
+          <For each={items.data}>
+            {(item, index) => {
+              return (
+                <Item
+                  no={`${index() + 1}.`}
+                  title={item.title}
+                  source={item.url}
+                  sourceDomain={item.url}
+                  points={item.score}
+                  author={item.by}
+                  createdAt={getDifferentInDays(new Date(item.time * 1000), new Date())}
+                  commentsCount={item.descendants}
+                >
+                  {(isOpen) => <Comments isOpen={isOpen} itemIds={item.kids ?? []} />}
+                </Item>
+              );
+            }}
+          </For>
+          <Show when={items.canNext}>
+            <div class="text-gray-400 text-2xl mt-3 ml-10 pb-10">
+              <button onClick={handleFetchMore}>More</button>
+            </div>
+          </Show>
+        </section>
       </Show>
     </div>
   );
